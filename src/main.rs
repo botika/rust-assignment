@@ -22,7 +22,7 @@ macro_rules! matcher {
                 m!($ty, _ => $s)
             };
             ($ty:ty, $p:pat_param => $s:expr) => {
-                if (matches!($_self.0.downcast_ref::<$ty>(), Some($p))) {
+                if matches!($_self.0.downcast_ref::<$ty>(), Some($p)) {
                     return $s;
                 }
             };
