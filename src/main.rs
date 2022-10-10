@@ -8,7 +8,7 @@ use thiserror::Error;
 
 mod calculate;
 
-use crate::calculate::{CalcError, WGraph};
+use crate::calculate::{AIter, CalcError, WGraph};
 
 #[derive(Debug, Error)]
 #[error("{0}")]
@@ -39,7 +39,7 @@ impl ResponseError for ResError {
     }
 }
 
-fn tuple_refs(item: &[(String, String)]) -> impl ExactSizeIterator<Item = (&str, &str)> + Clone {
+fn tuple_refs(item: &[(String, String)]) -> impl AIter {
     item.iter().map(|(s, e)| (s.as_str(), e.as_str()))
 }
 
