@@ -82,11 +82,11 @@ mod tests {
 
         let req = test::TestRequest::post()
             .uri("/")
-            .set_json(&vec![
-                ("IND".to_string(), "EWR".to_string()),
-                ("SFO".to_string(), "ATL".to_string()),
-                ("GSO".to_string(), "IND".to_string()),
-                ("ATL".to_string(), "GSO".to_string()),
+            .set_json([
+                ["IND", "EWR"],
+                ["SFO", "ATL"],
+                ["GSO", "IND"],
+                ["ATL", "GSO"],
             ])
             .to_request();
         let resp = app.call(req).await.unwrap();
@@ -98,7 +98,7 @@ mod tests {
 
         let req = test::TestRequest::post()
             .uri("/")
-            .set_json(&vec![["foo", "foo"]])
+            .set_json([["foo", "foo"]])
             .to_request();
         let resp = app.call(req).await.unwrap();
 
