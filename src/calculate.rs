@@ -1,16 +1,15 @@
 use std::collections::{BTreeSet, HashMap};
-use std::iter::once;
+use std::fmt::Display;
+use std::iter::{once, ExactSizeIterator};
+use std::marker::PhantomData;
 
 use petgraph::algo::toposort;
 use petgraph::graph::Graph;
 
-use serde::{Deserialize, Serialize};
-
+use anyhow::{bail, Result};
 use thiserror::Error;
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Edges(pub Vec<(String, String)>);
-
+// TODO: update number of errors and improve their descriptions
 #[derive(Debug, Error)]
 pub enum CalcError {
     #[error("invalid data")]
@@ -19,52 +18,83 @@ pub enum CalcError {
     Cycle(String),
 }
 
-pub fn calc<'a, E: AsRef<[(&'a str, &'a str)]>>(edges: E) -> Result<(&'a str, &'a str), CalcError> {
-    let s = edges.as_ref();
-    let nodes: Vec<&str> = BTreeSet::from_iter(s.iter().flat_map(|(s, e)| once(s).chain(once(e))))
-        .into_iter()
-        .copied()
-        .collect();
-    if nodes.len() > u32::MAX as usize {
-        return Err(CalcError::Invalid);
+pub struct WGraph<'a, Item = &'a str, Index = u32>(Graph<Item, Index>, PhantomData<&'a ()>);
+
+impl<'a, Item: Copy + Display, Index> WGraph<'a, Item, Index> {
+    pub fn new(graph: Graph<Item, Index>) -> Self {
+        WGraph(graph, PhantomData)
     }
-    let hash_nodes: HashMap<&str, u32> = nodes
-        .iter()
-        .enumerate()
-        .map(|(i, x)| (*x, i as u32))
-        .collect();
-    let mut graph: Graph<&str, u32> = Graph::with_capacity(nodes.len(), s.len());
-    for node in &nodes {
-        graph.add_node(*node);
+
+    pub fn first_last(&self) -> Result<(Item, Item)> {
+        let nodes = self.0.raw_nodes();
+        let topo = toposort(&self.0, None).map_err(|x| {
+            CalcError::Cycle(nodes.get(x.node_id().index()).unwrap().weight.to_string())
+        })?;
+        if topo.len() != nodes.len() {
+            bail!("invalid length TODO")
+        }
+        let first = topo.first().ok_or(CalcError::Invalid)?;
+        let first = nodes.get(first.index()).ok_or(CalcError::Invalid)?.weight;
+        let last = topo.last().ok_or(CalcError::Invalid)?;
+        let last = nodes.get(last.index()).ok_or(CalcError::Invalid)?.weight;
+
+        Ok((first, last))
     }
-    for (start, end) in s {
-        graph.update_edge(
-            hash_nodes
-                .get(start)
-                .copied()
-                .expect("should be imposible")
-                .into(),
-            hash_nodes
-                .get(end)
-                .copied()
-                .expect("should be imposible")
-                .into(),
-            1,
+}
+
+pub trait AIter<'a>: ExactSizeIterator<Item = (&'a str, &'a str)> + Clone + 'a {}
+impl<'a, T: ExactSizeIterator<Item = (&'a str, &'a str)> + Clone + 'a> AIter<'a> for T {}
+
+pub trait AEdges<Iter>: IntoIterator<IntoIter = Iter> {}
+impl<Iter, T: IntoIterator<IntoIter = Iter>> AEdges<Iter> for T {}
+
+impl WGraph<'_> {
+    pub fn from_edges<'b, Iter: AIter<'b>, Edges: AEdges<Iter>>(
+        edges: Edges,
+    ) -> Result<WGraph<'b>> {
+        let edges = edges.into_iter();
+        let len = edges.len();
+        let nodes = Vec::from_iter(
+            BTreeSet::from_iter(edges.clone().flat_map(|(s, e)| once(s).chain(once(e))))
+                .into_iter(),
         );
+        if nodes.len() > u32::MAX as usize {
+            bail!("invalid data max length")
+        }
+        let hash_nodes: HashMap<&str, u32> = nodes
+            .iter()
+            .enumerate()
+            .map(|(i, x)| (*x, i as u32))
+            .collect();
+        let mut graph: Graph<&str, u32> = Graph::with_capacity(nodes.len(), len);
+        for node in &nodes {
+            graph.add_node(*node);
+        }
+        for (start, end) in edges {
+            graph.update_edge(
+                hash_nodes
+                    .get(start)
+                    .copied()
+                    .expect("should be imposible")
+                    .into(),
+                hash_nodes
+                    .get(end)
+                    .copied()
+                    .expect("should be imposible")
+                    .into(),
+                1,
+            );
+        }
+
+        Ok(WGraph::new(graph))
     }
 
-    let mut topo = toposort(&graph, None)
-        .map_err(|x| CalcError::Cycle(nodes.get(x.node_id().index()).unwrap().to_string()))?
-        .into_iter();
-    if topo.len() != nodes.len() {
-        return Err(CalcError::Invalid);
+    pub fn calc_first_last<'b, Iter: AIter<'b>, Edges: AEdges<Iter>>(
+        edges: Edges,
+    ) -> Result<(&'b str, &'b str)> {
+        let graph = Self::from_edges(edges)?;
+        graph.first_last()
     }
-    let first = topo.next().ok_or(CalcError::Invalid)?;
-    let first = nodes.get(first.index()).ok_or(CalcError::Invalid)?;
-    let last = topo.last().ok_or(CalcError::Invalid)?;
-    let last = nodes.get(last.index()).ok_or(CalcError::Invalid)?;
-
-    Ok((first, last))
 }
 
 #[cfg(test)]
@@ -73,13 +103,16 @@ mod test {
 
     #[test]
     fn test() {
-        assert!(calc([]).is_err());
-        assert!(calc([("foo", "foo")]).is_err());
+        assert!(WGraph::calc_first_last([]).is_err());
+        assert!(WGraph::calc_first_last([("foo", "foo")]).is_err());
 
-        assert_eq!(calc([("foo", "bar")]).unwrap(), ("foo", "bar"));
+        assert_eq!(
+            WGraph::calc_first_last([("foo", "bar")]).unwrap(),
+            ("foo", "bar")
+        );
 
         let s = [("ATL", "EWR"), ("SFO", "ATL")];
-        let result = calc(s).unwrap();
+        let result = WGraph::calc_first_last(s).unwrap();
         assert_eq!(result, ("SFO", "EWR"));
 
         let s = [
@@ -88,7 +121,7 @@ mod test {
             ("GSO", "IND"),
             ("ATL", "GSO"),
         ];
-        let result = calc(s).unwrap();
+        let result = WGraph::calc_first_last(s).unwrap();
         assert_eq!(result, ("SFO", "EWR"));
     }
 }

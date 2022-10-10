@@ -1,22 +1,52 @@
+use std::fmt::Debug;
+
 use actix_web::http::StatusCode;
-use actix_web::{middleware, web, App, HttpResponse, HttpResponseBuilder, HttpServer};
+use actix_web::web::Json;
+use actix_web::{middleware, web, App, HttpResponse, HttpServer, Responder, ResponseError};
+
+use thiserror::Error;
 
 mod calculate;
 
-use crate::calculate::{calc, Edges};
+use crate::calculate::{CalcError, WGraph};
 
-async fn index(item: web::Json<Edges>) -> HttpResponse {
-    let item: Vec<_> = item
-        .0
-         .0
-        .iter()
-        .map(|(s, e)| (s.as_str(), e.as_str()))
-        .collect();
-    let result = calc(item);
-    match result {
-        Ok(x) => HttpResponse::Ok().json(x),
-        Err(e) => HttpResponseBuilder::new(StatusCode::BAD_REQUEST).body(e.to_string()),
+#[derive(Debug, Error)]
+#[error("{0}")]
+struct ResError(#[from] anyhow::Error);
+
+#[rustfmt::skip]
+macro_rules! matcher {
+    ($_self:ident) => {
+        macro_rules! m {
+            ($ty:ty => $s:expr) => {
+                m!($ty, _ => $s)
+            };
+            ($ty:ty, $p:pat_param => $s:expr) => {
+                if (matches!($_self.0.downcast_ref::<$ty>(), Some($p))) {
+                    return $s;
+                }
+            };
+        }
+    };
+}
+
+impl ResponseError for ResError {
+    fn status_code(&self) -> StatusCode {
+        matcher!(self);
+        m!(CalcError, CalcError::Cycle(_) => StatusCode::BAD_REQUEST);
+        m!(CalcError => StatusCode::EXPECTATION_FAILED);
+        StatusCode::INTERNAL_SERVER_ERROR
     }
+}
+
+fn as_ref_tuple(item: &[(String, String)]) -> impl ExactSizeIterator<Item = (&str, &str)> + Clone {
+    item.iter().map(|(s, e)| (s.as_str(), e.as_str()))
+}
+
+async fn index(item: Json<Vec<(String, String)>>) -> impl Responder {
+    Ok::<HttpResponse, ResError>(
+        HttpResponse::Ok().json(WGraph::calc_first_last(as_ref_tuple(&item.0))?),
+    )
 }
 
 #[actix_web::main]
@@ -39,7 +69,8 @@ async fn main() -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use actix_web::{body::to_bytes, dev::Service, http, test, web, App};
+    use actix_web::http::StatusCode;
+    use actix_web::{body::to_bytes, dev::Service, test, web, App};
 
     use super::*;
 
@@ -51,18 +82,29 @@ mod tests {
 
         let req = test::TestRequest::post()
             .uri("/")
-            .set_json(&Edges(vec![
+            .set_json(&vec![
                 ("IND".to_string(), "EWR".to_string()),
                 ("SFO".to_string(), "ATL".to_string()),
                 ("GSO".to_string(), "IND".to_string()),
                 ("ATL".to_string(), "GSO".to_string()),
-            ]))
+            ])
             .to_request();
         let resp = app.call(req).await.unwrap();
 
-        assert_eq!(resp.status(), http::StatusCode::OK);
+        assert_eq!(resp.status(), StatusCode::OK);
 
         let body_bytes = to_bytes(resp.into_body()).await.unwrap();
         assert_eq!(body_bytes, r##"["SFO","EWR"]"##);
+
+        let req = test::TestRequest::post()
+            .uri("/")
+            .set_json(&vec![["foo", "foo"]])
+            .to_request();
+        let resp = app.call(req).await.unwrap();
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        let body_bytes = to_bytes(resp.into_body()).await.unwrap();
+        assert_eq!(body_bytes, r##"cycle detected in node "foo""##);
     }
 }
