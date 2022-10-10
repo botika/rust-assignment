@@ -71,19 +71,7 @@ impl WGraph<'_> {
             graph.add_node(*node);
         }
         for (start, end) in edges {
-            graph.update_edge(
-                hash_nodes
-                    .get(start)
-                    .copied()
-                    .expect("should be imposible")
-                    .into(),
-                hash_nodes
-                    .get(end)
-                    .copied()
-                    .expect("should be imposible")
-                    .into(),
-                1,
-            );
+            graph.update_edge(hash_nodes[start].into(), hash_nodes[end].into(), 1);
         }
 
         Ok(WGraph::new(graph))
