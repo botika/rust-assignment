@@ -39,14 +39,12 @@ impl ResponseError for ResError {
     }
 }
 
-fn as_ref_tuple(item: &[(String, String)]) -> impl ExactSizeIterator<Item = (&str, &str)> + Clone {
+fn tuple_refs(item: &[(String, String)]) -> impl ExactSizeIterator<Item = (&str, &str)> + Clone {
     item.iter().map(|(s, e)| (s.as_str(), e.as_str()))
 }
 
 async fn index(item: Json<Vec<(String, String)>>) -> impl Responder {
-    Ok::<HttpResponse, ResError>(
-        HttpResponse::Ok().json(WGraph::calc_first_last(as_ref_tuple(&item.0))?),
-    )
+    Ok::<_, ResError>(HttpResponse::Ok().json(WGraph::calc_first_last(tuple_refs(&item.0))?))
 }
 
 #[actix_web::main]
