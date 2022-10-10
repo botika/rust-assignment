@@ -1,8 +1,8 @@
 use std::fmt::Debug;
 
 use actix_web::http::StatusCode;
-use actix_web::web::Json;
-use actix_web::{middleware, web, App, HttpResponse, HttpServer, Responder, ResponseError};
+use actix_web::web::{Json, JsonConfig};
+use actix_web::{middleware, post, App, HttpResponse, HttpServer, Responder, ResponseError};
 
 use thiserror::Error;
 
@@ -43,7 +43,8 @@ fn tuple_refs(item: &[(String, String)]) -> impl AIter {
     item.iter().map(|(s, e)| (s.as_str(), e.as_str()))
 }
 
-async fn index(item: Json<Vec<(String, String)>>) -> impl Responder {
+#[post("/calculate")]
+async fn calculate_service(item: Json<Vec<(String, String)>>) -> impl Responder {
     Ok::<_, ResError>(HttpResponse::Ok().json(WGraph::calc_first_last(tuple_refs(&item.0))?))
 }
 
@@ -57,8 +58,8 @@ async fn main() -> std::io::Result<()> {
         App::new()
             // enable logger
             .wrap(middleware::Logger::default())
-            .app_data(web::JsonConfig::default().limit(4096)) // <- limit size of the payload (global configuration)
-            .service(web::resource("/calculate").route(web::post().to(index)))
+            .app_data(JsonConfig::default().limit(4096)) // <- limit size of the payload (global configuration)
+            .service(calculate_service)
     })
     .bind(("127.0.0.1", 8080))?
     .run()
@@ -67,19 +68,17 @@ async fn main() -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use actix_web::http::StatusCode;
-    use actix_web::{body::to_bytes, dev::Service, test, web, App};
+    use actix_web::{body::to_bytes, dev::Service, test, App};
 
     use super::*;
 
     #[actix_web::test]
     async fn test_index() {
-        let app =
-            test::init_service(App::new().service(web::resource("/").route(web::post().to(index))))
-                .await;
+        const CALC_URL: &str = "/calculate";
+        let app = test::init_service(App::new().service(calculate_service)).await;
 
         let req = test::TestRequest::post()
-            .uri("/")
+            .uri(CALC_URL)
             .set_json([
                 ["IND", "EWR"],
                 ["SFO", "ATL"],
@@ -95,7 +94,7 @@ mod tests {
         assert_eq!(body_bytes, r##"["SFO","EWR"]"##);
 
         let req = test::TestRequest::post()
-            .uri("/")
+            .uri(CALC_URL)
             .set_json([["foo", "foo"]])
             .to_request();
         let resp = app.call(req).await.unwrap();
